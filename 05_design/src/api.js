@@ -27,4 +27,22 @@ export const productAPI = {
   delete: (id) => api.delete(`/products/${id}`),
 };
 
+// API methods for cart
+export const cartAPI = {
+  // Get all cart items
+  getAll: () => api.get('/cart/'),
+  
+  // Add item to cart
+  addItem: (productId, quantity = 1) => api.post('/cart/add', { 
+    product_id: productId, 
+    quantity 
+  }),
+  
+  // Remove item from cart
+  removeItem: (itemId) => api.delete(`/cart/${itemId}`),
+  
+  // Clear entire cart
+  clear: () => api.delete('/cart/'),
+};
+
 export default api;
