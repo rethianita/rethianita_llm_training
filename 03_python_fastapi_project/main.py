@@ -5,9 +5,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from config import settings
-from database import Product, create_tables, get_db
+from database import Product, CartItem, create_tables, get_db
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -33,6 +34,21 @@ class ProductResponse(BaseModel):
 
     class Config:
         from_attributes = True  
+
+
+class CartItemCreate(BaseModel):
+    product_id: int
+    quantity: int = 1
+
+
+class CartItemResponse(BaseModel):
+    id: int
+    product_id: int
+    quantity: int
+    product: ProductResponse
+
+    class Config:
+        from_attributes = True
 
 
 @asynccontextmanager
@@ -128,6 +144,92 @@ async def delete_product_by_id(product_id: int, db: AsyncSession = Depends(get_d
     await db.delete(db_product)
     await db.commit()
     return {"detail": f"Product {product_id} deleted successfully"}
+
+
+# Cart endpoints
+@app.post("/cart/add", response_model=CartItemResponse)
+async def add_to_cart(cart_item: CartItemCreate, db: AsyncSession = Depends(get_db)):
+    # Check if product exists and has sufficient stock
+    result = await db.execute(select(Product).filter(Product.id == cart_item.product_id))
+    product = result.scalar_one_or_none()
+    
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    if product.stock < cart_item.quantity:
+        raise HTTPException(status_code=400, detail="Insufficient stock")
+    
+    # Check if item already exists in cart
+    result = await db.execute(select(CartItem).filter(CartItem.product_id == cart_item.product_id))
+    existing_cart_item = result.scalar_one_or_none()
+    
+    if existing_cart_item:
+        # Update quantity
+        if product.stock < existing_cart_item.quantity + cart_item.quantity:
+            raise HTTPException(status_code=400, detail="Insufficient stock")
+        existing_cart_item.quantity += cart_item.quantity
+        db_cart_item = existing_cart_item
+    else:
+        # Create new cart item
+        db_cart_item = CartItem(product_id=cart_item.product_id, quantity=cart_item.quantity)
+        db.add(db_cart_item)
+    
+    # Update product stock
+    product.stock -= cart_item.quantity
+    
+    await db.commit()
+    await db.refresh(db_cart_item)
+    
+    # Fetch the cart item with product details
+    result = await db.execute(
+        select(CartItem).options(selectinload(CartItem.product)).filter(CartItem.id == db_cart_item.id)
+    )
+    cart_item_with_product = result.scalar_one()
+    
+    return cart_item_with_product
+
+
+@app.get("/cart/", response_model=List[CartItemResponse])
+async def get_cart_items(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(CartItem).options(selectinload(CartItem.product)))
+    cart_items = result.scalars().all()
+    return cart_items
+
+
+@app.delete("/cart/{item_id}")
+async def remove_from_cart(item_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(CartItem).filter(CartItem.id == item_id))
+    cart_item = result.scalar_one_or_none()
+    
+    if cart_item is None:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    
+    # Restore product stock
+    result = await db.execute(select(Product).filter(Product.id == cart_item.product_id))
+    product = result.scalar_one_or_none()
+    if product:
+        product.stock += cart_item.quantity
+    
+    await db.delete(cart_item)
+    await db.commit()
+    return {"detail": "Item removed from cart"}
+
+
+@app.delete("/cart/")
+async def clear_cart(db: AsyncSession = Depends(get_db)):
+    # Restore stock for all cart items
+    result = await db.execute(select(CartItem))
+    cart_items = result.scalars().all()
+    
+    for cart_item in cart_items:
+        result = await db.execute(select(Product).filter(Product.id == cart_item.product_id))
+        product = result.scalar_one_or_none()
+        if product:
+            product.stock += cart_item.quantity
+        await db.delete(cart_item)
+    
+    await db.commit()
+    return {"detail": "Cart cleared"}
 
 
 if __name__ == "__main__":

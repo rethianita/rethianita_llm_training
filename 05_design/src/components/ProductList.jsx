@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { FiPlus, FiEdit, FiTrash2, FiSearch, FiDollarSign, FiPackage, FiTrendingUp } from 'react-icons/fi';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { productAPI } from '../api';
+import { productAPI, cartAPI } from '../api';
 import ProductForm from './ProductForm';
 import ProductDetails from './ProductDetails';
 import DeleteConfirmation from './DeleteConfirmation';
 import StatsCard from './StatsCard';
 import LoadingSpinner from './LoadingSpinner';
+import ShoppingCart from './ShoppingCart';
 
 const ProductList = () => {
   const [products, setProducts] = useState([]);
@@ -69,6 +70,27 @@ const ProductList = () => {
     } catch (error) {
       toast.error('Failed to delete product');
       console.error('Error deleting product:', error);
+    }
+  };
+
+  const addToCart = async (product) => {
+    if (product.stock <= 0) {
+      toast.error('Product is out of stock');
+      return;
+    }
+    
+    try {
+      await cartAPI.addItem(product.id, 1);
+      toast.success(`${product.name} added to cart`);
+      // Reload products to update stock count
+      loadProducts();
+    } catch (error) {
+      if (error.response?.status === 400) {
+        toast.error('Insufficient stock');
+      } else {
+        toast.error('Failed to add item to cart');
+      }
+      console.error('Error adding to cart:', error);
     }
   };
 
@@ -175,6 +197,22 @@ const ProductList = () => {
                       </div>
                     </div>
                     
+                    {/* Add to Cart Button */}
+                    <div className="mb-4">
+                      <button
+                        onClick={() => addToCart(product)}
+                        disabled={product.stock <= 0}
+                        className={`w-full py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors ${
+                          product.stock <= 0
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-green-600 text-white hover:bg-green-700'
+                        }`}
+                      >
+                        <FiPlus className="w-4 h-4" />
+                        {product.stock <= 0 ? 'Out of Stock' : 'Add to Cart'}
+                      </button>
+                    </div>
+                    
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2">
                       <button
@@ -255,6 +293,9 @@ const ProductList = () => {
           draggable
           pauseOnHover
         />
+
+        {/* Shopping Cart */}
+        <ShoppingCart />
       </div>
     </div>
   );
